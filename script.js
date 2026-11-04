@@ -9,7 +9,7 @@ const noResults=document.getElementById("no-results"),count=document.getElementB
 const clear=document.getElementById("clear-search"),showAll=document.getElementById("show-all");
 const dialog=document.getElementById("image-viewer"),image=document.getElementById("viewer-image"),caption=document.getElementById("viewer-caption");
 const close=document.getElementById("viewer-close"),prev=document.getElementById("viewer-prev"),next=document.getElementById("viewer-next"),barber=document.getElementById("barber-mode");
-const PAGE_SIZE=Number.MAX_SAFE_INTEGER;
+const PAGE_SIZE=12;
 let zoomLevel=1,panX=0,panY=0,dragging=false,dragStartX=0,dragStartY=0,dragOriginX=0,dragOriginY=0;
 const zoomControls=document.createElement("div");
 zoomControls.className="viewer-zoom-controls";
@@ -36,8 +36,10 @@ image.addEventListener("pointerdown",e=>{
   const [a,b]=[...activePointers.values()];
   gestureMode="pinch";gestureStartDistance=Math.max(1,pointerDistance(a,b));gestureStartZoom=zoomLevel;
   const mid=pointerMidpoint(a,b);gestureStartMidX=mid.x;gestureStartMidY=mid.y;gestureStartPanX=panX;gestureStartPanY=panY;
- }else if(activePointers.size===1&&zoomLevel>1){
-  gestureMode="pan";gestureStartX=e.clientX;gestureStartY=e.clientY;gestureStartPanX=panX;gestureStartPanY=panY;
+ }else if(activePointers.size===1){
+  gestureStartX=e.clientX;gestureStartY=e.clientY;
+  if(zoomLevel>1){gestureMode="pan";gestureStartPanX=panX;gestureStartPanY=panY;}
+  else{gestureMode="swipe";}
  }else{gestureMode="none";}
 });
 image.addEventListener("pointermove",e=>{
@@ -57,9 +59,19 @@ image.addEventListener("pointermove",e=>{
  }
 });
 function finishPointer(e){
+ const start=activePointers.get(e.pointerId);
+ if(!start)return;
+ const wasSwipe=activePointers.size===1&&gestureMode==="swipe";
+ const dx=e.clientX-start.x,dy=e.clientY-start.y;
  activePointers.delete(e.pointerId);
- if(activePointers.size===1&&zoomLevel>1){
-  const [remaining]=[...activePointers.values()];gestureMode="pan";gestureStartX=remaining.x;gestureStartY=remaining.y;gestureStartPanX=panX;gestureStartPanY=panY;
+ if(wasSwipe&&e.type==="pointerup"&&Math.abs(dx)>48&&Math.abs(dx)>Math.abs(dy)*1.25){
+  move(dx<0?1:-1);
+ }
+ if(activePointers.size===1){
+  const [remaining]=[...activePointers.values()];
+  gestureStartX=remaining.x;gestureStartY=remaining.y;
+  if(zoomLevel>1){gestureMode="pan";gestureStartPanX=panX;gestureStartPanY=panY;}
+  else{gestureMode="swipe";}
  }else if(activePointers.size===0){gestureMode="none";applyZoom();}
  else if(activePointers.size===2){
   const [a,b]=[...activePointers.values()];gestureMode="pinch";gestureStartDistance=Math.max(1,pointerDistance(a,b));gestureStartZoom=zoomLevel;const mid=pointerMidpoint(a,b);gestureStartMidX=mid.x;gestureStartMidY=mid.y;gestureStartPanX=panX;gestureStartPanY=panY;
@@ -94,7 +106,7 @@ function showCard(c){opener=c.querySelector(".style-image");index=matches.indexO
 function render(){const c=matches[index];if(!c)return;setZoom(1);const img=c.querySelector("img"),button=c.querySelector(".style-image");image.src=button.dataset.src||img.src;image.alt=img.alt||c.dataset.name||"Style reference";caption.replaceChildren();const strong=document.createElement("strong");strong.id="viewer-dialog-title";strong.className="viewer-caption-title";strong.textContent=c.querySelector("h4")?.textContent.trim()||"Style reference";const detail=document.createElement("span");detail.className="viewer-caption-detail";detail.textContent=c.querySelector(".style-info p")?.textContent.trim()||"Show this reference to your barber.";caption.append(strong,detail);dialog.setAttribute("aria-label",strong.textContent);syncNav();}
 function move(delta){const target=index+delta;if(target<0||target>=matches.length)return;index=target;render();}
 function loadMore(kind){visibleCount[kind]+=PAGE_SIZE;paint();}
-cards.forEach(c=>{const button=c.querySelector(".style-image"),img=c.querySelector("img");if(!button||!img)return;button.setAttribute("aria-label",(c.querySelector("h4")?.textContent||"Style")+", open full-size reference");img.loading="lazy";img.decoding="async";img.addEventListener("error",()=>{img.dataset.loadError="true";c.classList.add("image-failed");},{once:true});img.addEventListener("load",()=>c.classList.remove("image-failed"),{once:true});button.addEventListener("click",()=>showCard(c));});
+cards.forEach(c=>{const button=c.querySelector(".style-image"),img=c.querySelector("img");if(!button||!img)return;button.setAttribute("aria-label",(c.querySelector("h4")?.textContent||"Style")+", open full-size reference");img.loading="lazy";img.decoding="async";img.fetchPriority="low";img.addEventListener("error",()=>{img.dataset.loadError="true";c.classList.add("image-failed");},{once:true});img.addEventListener("load",()=>c.classList.remove("image-failed"),{once:true});button.addEventListener("click",()=>showCard(c));});
 filters.forEach(b=>b.addEventListener("click",()=>{filter=b.dataset.filter;visibleCount={hair:PAGE_SIZE,beard:PAGE_SIZE};paint();}));
 search.addEventListener("input",()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{visibleCount={hair:PAGE_SIZE,beard:PAGE_SIZE};paint();},140);});
 search.addEventListener("keydown",e=>{if(e.key==="Escape"&&search.value){search.value="";visibleCount={hair:PAGE_SIZE,beard:PAGE_SIZE};paint();}});
@@ -104,8 +116,7 @@ showAll?.addEventListener("click",()=>{search.value="";filter="all";visibleCount
 document.addEventListener("keydown",e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();search.focus();}if(dialog.open){if(e.key==="ArrowLeft"){e.preventDefault();move(-1);}if(e.key==="ArrowRight"){e.preventDefault();move(1);}}});
 close.addEventListener("click",()=>dialog.close());prev.addEventListener("click",()=>move(-1));next.addEventListener("click",()=>move(1));
 dialog.addEventListener("close",()=>{document.body.classList.remove("viewer-open");barber.setAttribute("aria-pressed","false");dialog.classList.remove("barber-mode");if(wakeLock){wakeLock.release().catch(()=>{});wakeLock=null;}if(opener?.isConnected)opener.focus();});
-dialog.addEventListener("pointerdown",e=>{touchX=e.clientX;touchY=e.clientY;},{passive:true});
-dialog.addEventListener("pointerup",e=>{if(e.target===image||activePointers.size>0)return;const dx=e.clientX-touchX,dy=e.clientY-touchY;if(zoomLevel===1&&Math.abs(dx)>48&&Math.abs(dx)>Math.abs(dy)*1.2)move(dx<0?1:-1);},{passive:true});
+// Swipe navigation is handled on the image with Pointer Events above.
 barber.addEventListener("click",async()=>{const enabled=barber.getAttribute("aria-pressed")!=="true";barber.setAttribute("aria-pressed",String(enabled));dialog.classList.toggle("barber-mode",enabled);if(enabled&&"wakeLock"in navigator){try{wakeLock=await navigator.wakeLock.request("screen");}catch(_){}}else if(wakeLock){await wakeLock.release().catch(()=>{});wakeLock=null;}});
 image.addEventListener("error",()=>{image.alt="Image unavailable";caption.textContent="This image could not be loaded. Close and choose another reference.";});
 paint();
